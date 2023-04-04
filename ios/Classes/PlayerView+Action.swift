@@ -55,7 +55,7 @@ extension PlayerView {
     }
     
     private func setUpAsset(with url: URL, completion: ((_ asset: AVAsset) -> Void)?) {
-        let asset = AVAsset(url: url)
+        let asset = AVURLAsset(url: url)
         asset.loadValuesAsynchronously(forKeys: ["playable"]) {
             var error: NSError? = nil
             let status = asset.statusOfValue(forKey: "playable", error: &error)
@@ -72,6 +72,8 @@ extension PlayerView {
                 self.errorMessage.text = "Asset cannot play with unknow reason."
             }
         }
+        
+        //        asset.resourceLoader.setDelegate(<#T##delegate: AVAssetResourceLoaderDelegate?##AVAssetResourceLoaderDelegate?#>, queue: <#T##DispatchQueue?#>)
     }
     
     private func setUpPlayerItem(with asset: AVAsset) {
@@ -99,7 +101,7 @@ extension PlayerView {
             super.observeValue(forKeyPath: keyPath, of: object, change: change, context: context)
             return
         }
-        
+        self.activityIndicator.stopAnimating()
         if keyPath == #keyPath(AVPlayerItem.status) {
             let status: AVPlayerItem.Status
             if let statusNumber = change?[.newKey] as? NSNumber {
@@ -110,13 +112,16 @@ extension PlayerView {
             switch status {
             case .readyToPlay:
                 onPlayingEvent(status: PlayingStatus.start);
-                let item = setting.playingItems[getCurrentPlayIndex()];
-                playerLayer.videoGravity = item.fitMode == FitMode.contain ? AVLayerVideoGravity.resizeAspect : AVLayerVideoGravity.resizeAspectFill;
+                playerLayer.videoGravity = currentPlayingItem.fitMode == FitMode.contain ? AVLayerVideoGravity.resizeAspect : AVLayerVideoGravity.resizeAspectFill;
+                setViewAspectRatio()
                 self.onProgress();
-                player?.play();
-                toggleControl();
+                if(setting.autoPlay || autoplayCalled) {
+                    player?.play();
+                    toggleControl();
+                    playIcon.setAllStateImage(MediaResource.shared.getImage(name: "pause"))
+                }
+                autoplayCalled = true;
                 errorMessage.isHidden = true;
-                playIcon.setAllStateImage(MediaResource.shared.getImage(name: "pause"))
             case .failed:
                 errorMessage.text = "Player failed to play."
                 errorMessage.isHidden = false
@@ -212,6 +217,19 @@ extension PlayerView {
         self.play(with: setting.playingItems[getCurrentPlayIndex()])
     }
     
+    func setViewAspectRatio() {
+        self.snp.remakeConstraints({ make in
+            make.width.equalToSuperview()
+            if(currentPlayingItem.aspectRatio != nil && currentPlayingItem.fitMode == FitMode.cover) {
+                make.height.greaterThanOrEqualTo(self.snp.width).dividedBy(currentPlayingItem.aspectRatio!)
+                make.height.lessThanOrEqualToSuperview()
+            }else {
+                make.height.equalToSuperview()
+            }
+            make.center.equalToSuperview()
+        })
+    }
+    
     func toggleFullscreen(isFullScreen:Bool) {
         if(self.isFullScreen == isFullScreen){
             return;
@@ -246,9 +264,7 @@ extension PlayerView {
             DispatchQueue.main.async {
                 self.containerView.addSubview(self)
                 self.backIcon.isHidden = self.setting.hideBackButton;
-                self.snp.makeConstraints({ make in
-                    make.edges.equalTo(self.containerView)
-                })
+                self.setViewAspectRatio()
             }
         }
         playNextIcon.isHidden = !isFullScreen

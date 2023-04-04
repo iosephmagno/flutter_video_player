@@ -148,7 +148,8 @@ class VideoPlayerView: NSObject, FlutterPlatformView, PlayerViewDelegate {
         playerView = PlayerView(containerView: _view,setting: param)
         _view.addSubview(playerView!)
         playerView?.snp.makeConstraints { (make) -> Void in
-            make.edges.equalTo(_view)
+            make.width.equalTo(_view)
+            make.height.equalTo(_view)
         }
         playerView?.delegate = self;
     }
