@@ -89,11 +89,11 @@ class CachePage extends StatefulWidget {
               TextButton(
                 child: Text("Play video2"),
                 onPressed: () {
-                  currentUrl = currentUrl;
+                  currentUrl = url2;
                   debugPrint('Playing video 2');
                   controller.play( PlayingItem(
                     id: '2',
-                    url: url2,
+                    url: currentUrl,
                     aspectRatio: 4 / 3,
                     fitMode: FitMode.contain,
                   ));
