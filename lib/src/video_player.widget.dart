@@ -57,6 +57,9 @@ class VideoPlayerOnePlusDream extends StatefulWidget {
   /// set the message when the last of the playing items is finished
   final String? lastPlayMessage;
 
+  /// set buffer duration, minimum value should be 1
+  final double? bufferDuration;
+
   const VideoPlayerOnePlusDream(
     this.playingItems, {
     this.autoPlay = true,
@@ -72,6 +75,7 @@ class VideoPlayerOnePlusDream extends StatefulWidget {
     this.onPlaying,
     this.lastPlayMessage,
     this.hideControls = false,
+    this.bufferDuration,
     Key? key,
   }) : super(key: key);
 
@@ -140,6 +144,7 @@ class _VideoPlayerOnePlusDreamState extends State<VideoPlayerOnePlusDream> {
         "hideBackButton": widget.hideBackButton,
         "lastPlayingMessage": widget.lastPlayMessage,
         "hideControls": widget.hideControls,
+        "bufferDuration": widget.bufferDuration,
       },
     );
   }

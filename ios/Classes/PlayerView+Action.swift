@@ -54,54 +54,83 @@ extension PlayerView {
         NotificationCenter.default.removeObserver(self)
     }
     
-    private func setUpAsset(with url: URL, completion: ((_ asset: AVAsset) -> Void)?) {
-        let asset = AVURLAsset(url: url)
-        asset.loadValuesAsynchronously(forKeys: ["playable"]) {
+    private func setUpAsset(with u: URL, completion: ((_ asset: AVAsset) -> Void)?) {
+        guard let url = getCachedURL(url: u) else {
+            errorMessage.isHidden = false;
+            errorMessage.text = "Cannot cache video to play."
+            return
+        }
+        let asset: AVURLAsset?;
+        if(!url.path.hasSuffix(".m3u8") && FileManager.default.fileExists(atPath: url.path)) {
+            asset = AVURLAsset(url: url)
+        }else {
+            self.loaderDelegate = CacheResourceLoaderDelegate(withURL: u)
+            asset = AVURLAsset(url: self.loaderDelegate!.streamingAssetURL)
+            asset!.resourceLoader.setDelegate(self.loaderDelegate, queue: DispatchQueue.main)
+        }
+        asset?.loadValuesAsynchronously(forKeys: ["playable"]) {
             var error: NSError? = nil
-            let status = asset.statusOfValue(forKey: "playable", error: &error)
+            let status = asset?.statusOfValue(forKey: "playable", error: &error)
             switch status {
             case .loaded:
-                completion?(asset)
+                completion?(asset!)
             case .failed:
-                self.errorMessage.isHidden = true
-                self.errorMessage.text = "Asset failed to load."
+                self.toggleMessage(msg: "Asset failed to load.")
             case .cancelled:
-                self.errorMessage.isHidden = true
-                self.errorMessage.text = "Asset cancelled to play."
+                self.toggleMessage(msg: "Asset cancelled to play.")
             default:
-                self.errorMessage.text = "Asset cannot play with unknow reason."
+                self.toggleMessage(msg: "Asset cannot play with unknow reason.")
             }
         }
-
-        //        asset.resourceLoader.setDelegate(<#T##delegate: AVAssetResourceLoaderDelegate?##AVAssetResourceLoaderDelegate?#>, queue: <#T##DispatchQueue?#>)
+        
     }
-
+    
+    private func toggleMessage(msg: String?) {
+        DispatchQueue.main.async {
+            if (msg == nil) {
+                self.errorMessage.isHidden = true
+            } else {
+                self.errorMessage.isHidden = false
+                self.errorMessage.text = msg;
+            }
+        }
+    }
+    
     private func setUpPlayerItem(with asset: AVAsset) {
-
+        
         self.playerItem = AVPlayerItem(asset: asset)
-        //        self.playerItem?.preferredPeakBitRate = 200000.0
-        self.playerItem?.addObserver(self, forKeyPath: #keyPath(AVPlayerItem.status), options: [.old, .new], context: &playerItemContext)
-
+        self.playerItem?.preferredForwardBufferDuration = self.setting.bufferDuration ?? 5;
+        self.playerItem?.addObserver(self, forKeyPath: #keyPath(AVPlayerItem.status), options: [.new], context: &playerItemContext)
+        self.playerItem?.addObserver(self, forKeyPath: #keyPath(AVPlayerItem.isPlaybackLikelyToKeepUp), options: [.new], context: &playerItemContext)
+        
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
-            self.player = AVPlayer(playerItem: self.playerItem!)
-            if(self.currentTime > 0){
-                let c:CMTime = CMTimeMake(value: Int64(self.currentTime * 1000), timescale: 1000)
-                self.seekTo(time: c)
+            if(self.player == nil){
+                self.player = AVPlayer(playerItem: self.playerItem!)
+            }else {
+                self.player?.replaceCurrentItem(with: self.playerItem!)
             }
-            self.videoSlider.value = Float(self.currentTime);
-            self.duration = CMTimeGetSeconds(asset.duration)
-            self.durationTimeLabel.text = formatTime(seconds: self.duration)
-            self.videoSlider.maximumValue = Float(self.duration)
+            self.playerLayer.videoGravity = self.currentPlayingItem.fitMode == FitMode.contain ? AVLayerVideoGravity.resizeAspect : AVLayerVideoGravity.resizeAspectFill;
+            self.setViewAspectRatio()
+            self.player?.play()
+            if (self.setting.autoPlay || self.autoplayCalled) {
+                self.toggleControl();
+                self.playIcon.setAllStateImage(MediaResource.shared.getImage(name: "pause"))
+            } else {
+                self.player?.pause()
+            }
+            self.autoplayCalled = true;
+            self.errorMessage.isHidden = true;
         }
     }
-
+    
     override func observeValue(forKeyPath keyPath: String?, of object: Any?, change: [NSKeyValueChangeKey : Any]?, context: UnsafeMutableRawPointer?) {
         guard context == &playerItemContext else {
             super.observeValue(forKeyPath: keyPath, of: object, change: change, context: context)
             return
         }
         self.activityIndicator.stopAnimating()
+        print("value \(change?[.newKey])")
         if keyPath == #keyPath(AVPlayerItem.status) {
             let status: AVPlayerItem.Status
             if let statusNumber = change?[.newKey] as? NSNumber {
@@ -111,16 +140,17 @@ extension PlayerView {
             }
             switch status {
             case .readyToPlay:
-                onPlayingEvent(status: PlayingStatus.start);
-                playerLayer.videoGravity = currentPlayingItem.fitMode == FitMode.contain ? AVLayerVideoGravity.resizeAspect : AVLayerVideoGravity.resizeAspectFill;
-                setViewAspectRatio()
-                self.onProgress();
-                if(setting.autoPlay || autoplayCalled) {
-                    player?.play();
-                    toggleControl();
-                    playIcon.setAllStateImage(MediaResource.shared.getImage(name: "pause"))
+                self.onPlayingEvent(status: PlayingStatus.start);
+                if(self.currentTime > 0){
+                    let c:CMTime = CMTimeMake(value: Int64(self.currentTime * 1000), timescale: 1000)
+                    self.seekTo(time: c)
                 }
-                autoplayCalled = true;
+                self.videoSlider.value = Float(self.currentTime);
+                self.duration = CMTimeGetSeconds(self.player?.currentItem?.duration ?? CMTime(value: 0, timescale: 1000))
+                self.durationTimeLabel.text = formatTime(seconds: self.duration)
+                self.videoSlider.maximumValue = Float(self.duration)
+                self.onProgress();
+   
                 errorMessage.isHidden = true;
             case .failed:
                 errorMessage.text = "Player failed to play."
@@ -132,9 +162,16 @@ extension PlayerView {
                 errorMessage.text = "Player has something wrong."
                 errorMessage.isHidden = false
             }
+        } else if (keyPath == #keyPath(AVPlayerItem.isPlaybackLikelyToKeepUp)) {
+            let canPlay = change?[.newKey] as? Bool ?? false
+            if(canPlay) {
+                self.activityIndicator.stopAnimating()
+            }else {
+                self.activityIndicator.startAnimating()
+            }
         }
     }
-
+    
     @objc func playNext() {
         let ind = getCurrentPlayIndex();
         if(ind < setting.playingItems.count - 1) {
@@ -142,12 +179,12 @@ extension PlayerView {
             onPlayingEvent(status: PlayingStatus.start);
         }
     }
-
+    
     func getCurrentPlayIndex()->Int {
         guard let ind = setting.playingItems.firstIndex(where: { $0.id == currentPlayingItem.id }) else {return 0}
         return ind;
     }
-
+    
     @objc func backIconClicked() {
         if(self.isFullScreen) {
             toggleFullscreen(isFullScreen:false);
@@ -155,11 +192,11 @@ extension PlayerView {
             self.delegate?.onBack();
         }
     }
-
+    
     @objc func fullscreenIconClicked() {
         toggleFullscreen(isFullScreen: !self.isFullScreen);
     }
-
+    
     @objc func onVideoSliderValChanged(slider: UISlider, event: UIEvent) {
         if let touchEvent = event.allTouches?.first {
             print(touchEvent.phase.rawValue)
@@ -176,7 +213,7 @@ extension PlayerView {
             }
         }
     }
-
+    
     func seekTo(time:CMTime) {
         guard let p = self.player else {return}
         p.seek(to: time)
@@ -186,7 +223,7 @@ extension PlayerView {
             self.timerDraggingView.isHidden = true
         }
     }
-
+    
     func togglePoster(show:Bool) {
         if(show) {
             self.addSubview(posterImg)
@@ -211,12 +248,12 @@ extension PlayerView {
         } else {
             self.posterImg.removeFromSuperview()
         }
-
+        
     }
     @objc private func handlePosterImageClicked() {
         self.play(with: setting.playingItems[getCurrentPlayIndex()])
     }
-
+    
     func setViewAspectRatio() {
         self.snp.remakeConstraints({ make in
             make.width.equalToSuperview()
@@ -228,8 +265,9 @@ extension PlayerView {
             }
             make.center.equalToSuperview()
         })
+        
     }
-
+    
     func toggleFullscreen(isFullScreen:Bool) {
         if(self.isFullScreen == isFullScreen){
             return;
@@ -242,7 +280,7 @@ extension PlayerView {
                 .compactMap({$0 as? UIWindowScene})
                 .first?.windows
                 .filter({$0.isKeyWindow}).first
-
+            
         } else {
             keyWindow = UIApplication.shared.keyWindow
         }
@@ -281,7 +319,7 @@ extension PlayerView {
         toggleNetwork()
         fullscreenIcon.setAllStateImage(MediaResource.shared.getImage(name: isFullScreen ? "fullscreen_exit":"fullscreen"))
     }
-
+    
     func onProgress() {
         self._playerObserver =  self.player?.addPeriodicTimeObserver(forInterval: CMTimeMakeWithSeconds(1, preferredTimescale: 1), queue: DispatchQueue.main) { (CMTime) -> Void in
             if self.player!.currentItem?.status == .readyToPlay {
@@ -289,7 +327,7 @@ extension PlayerView {
                 if(self.timerDraggingView.isHidden) {
                     self.videoSlider.value = Float(self.currentTime);
                 }
-
+                
                 let timer = formatTime(seconds: self.currentTime)
                 self.currentTimeLabel.text = timer
                 self.currentTimeLabel.snp.updateConstraints { make in
@@ -303,7 +341,7 @@ extension PlayerView {
                     self.togglePlayNextLabel(show: false)
                 }
             }
-
+            
             self.errorMessage.isHidden = true
             let playbackLikelyToKeepUp = self.player?.currentItem?.isPlaybackLikelyToKeepUp
             if playbackLikelyToKeepUp == false{
@@ -313,7 +351,7 @@ extension PlayerView {
             }
         }
     }
-
+    
     func togglePlayNextLabel(show:Bool?) {
         if(show == nil && !self.playNextLabel.isHidden) {
             self.playNextLabel.snp.remakeConstraints { make in
@@ -325,27 +363,27 @@ extension PlayerView {
             self.playNextLabel.isHidden = !s
         }
     }
-
-
+    
+    
     func pictureInPictureController(_ pictureInPictureController: AVPictureInPictureController,
                                     restoreUserInterfaceForPictureInPictureStopWithCompletionHandler completionHandler: @escaping (Bool) -> Void) {
         // Restore the user interface.
         print("pip completed")
         completionHandler(true)
     }
-
+    
     func pictureInPictureControllerWillStartPictureInPicture(_ pictureInPictureController: AVPictureInPictureController) {
         // Hide the playback controls.
         // Show the placeholder artwork.
         print("start pip")
     }
-
+    
     func pictureInPictureControllerDidStopPictureInPicture(_ pictureInPictureController: AVPictureInPictureController) {
         // Hide the placeholder artwork.
         // Show the playback controls.
         print("stop pip")
     }
-
+    
     @objc func pipIconClicked() {
         if self.pipController.isPictureInPictureActive {
             self.pipController.stopPictureInPicture()
@@ -353,11 +391,11 @@ extension PlayerView {
             self.pipController.startPictureInPicture()
         }
     }
-
+    
     @objc func rateIconClicked() {
         self.rateSelectionView.isHidden = !self.rateSelectionView.isHidden
     }
-
+    
     func onRateChanged(rate:Float) {
         self.player?.rate = rate
         self.delegate?.onRateChange(rate: rate)
@@ -365,16 +403,16 @@ extension PlayerView {
         self.rateIcon.setTitle("x \(rate)", for: .normal)
         self.rateIcon.titleLabel?.font = UIFont.systemFont(ofSize: 12)
     }
-
+    
     @objc func playerDidFinishPlaying(sender: Notification) {
         let playerItem = sender.object as? AVPlayerItem;
         if(playerItem == self.playerItem){
             self.onPlayingEvent(status: PlayingStatus.end)
             playNext()
         }
-
+        
     }
-
+    
     @objc func captureChanged() {
         self.screenCaptureView.isHidden = !UIScreen.main.isCaptured
         if(UIScreen.main.isCaptured) {
@@ -385,3 +423,4 @@ extension PlayerView {
         }
     }
 }
+

@@ -19,14 +19,18 @@ class CachePage extends StatefulWidget {
     String url3 = 'https://d305e11xqcgjdr.cloudfront.net/stories/4cf90380-e814-4f74-aac0-250a7b2cbaac/4.mp4';
     String url4 = 'https://d305e11xqcgjdr.cloudfront.net/stories/61cc00f1-6e16-4015-b92d-e34e55e28742/13.mp4';
 
+    late String currentUrl;
+
 
   @override
   void initState() {
    // controller = VideoPlayerController(VideoPlayerConfiguration);
+    currentUrl = url1;
   }
 
   @override
   Widget build(BuildContext context) {
+    currentUrl = url1;
     return Scaffold(
       appBar: AppBar(
         title: const Text('Cache'),
@@ -72,10 +76,11 @@ class CachePage extends StatefulWidget {
               TextButton(
                 child: Text("Play video1"),
                 onPressed: () {
+                  currentUrl = url1;
                   debugPrint('Playing video 1');
                   controller.play( PlayingItem(
                     id: '1',
-                    url: url1,
+                    url: currentUrl,
                     aspectRatio: 9 / 16,
                     fitMode: FitMode.cover,
                   ));
@@ -84,6 +89,7 @@ class CachePage extends StatefulWidget {
               TextButton(
                 child: Text("Play video2"),
                 onPressed: () {
+                  currentUrl = currentUrl;
                   debugPrint('Playing video 2');
                   controller.play( PlayingItem(
                     id: '2',
@@ -123,9 +129,12 @@ class CachePage extends StatefulWidget {
                 },
               ),
               TextButton(
-                child: Text("Precache video"),
+                child: Text("Precache current video"),
                 onPressed: () {
                   debugPrint('Precaching video');
+                  VideoPlayerGlobal().cachePlayingItems([
+                    currentUrl,
+                  ]);
                   //controller.preCache(videoSource);
                 },
               ),
